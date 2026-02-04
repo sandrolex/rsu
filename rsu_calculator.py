@@ -488,28 +488,30 @@ with tab_single:
         with col_fetch2:
             fetch_currency = st.button("🔄 Fetch USD/EUR", key="single_fetch_currency", use_container_width=True)
 
-        # Session state for single calculation
-        if "single_vesting_price" not in st.session_state:
-            st.session_state.single_vesting_price = 100.0
-        if "single_current_price" not in st.session_state:
-            st.session_state.single_current_price = 150.0
-        if "single_usd_eur" not in st.session_state:
-            st.session_state.single_usd_eur = 0.92
+        # Initialize session state for single calculation (use widget keys directly)
+        if "single_vesting_value" not in st.session_state:
+            st.session_state.single_vesting_value = 100.0
+        if "single_current_value" not in st.session_state:
+            st.session_state.single_current_value = 150.0
+        if "single_usd_eur_input" not in st.session_state:
+            st.session_state.single_usd_eur_input = 0.92
 
         if fetch_stock:
             with st.spinner(f"Fetching {stock_ticker} prices..."):
                 vp = fetch_stock_price(stock_ticker, vesting_date)
                 if vp:
-                    st.session_state.single_vesting_price = vp
+                    st.session_state.single_vesting_value = vp
                 cp = fetch_stock_price(stock_ticker, sell_date)
                 if cp:
-                    st.session_state.single_current_price = cp
+                    st.session_state.single_current_value = cp
+            st.rerun()
 
         if fetch_currency:
             with st.spinner("Fetching rate..."):
                 rate = fetch_usd_eur_rate()
                 if rate:
-                    st.session_state.single_usd_eur = rate
+                    st.session_state.single_usd_eur_input = rate
+            st.rerun()
 
     st.subheader("📈 Values (editable)")
     col_val1, col_val2, col_val3 = st.columns(3)
@@ -518,7 +520,6 @@ with tab_single:
         vesting_value_usd = st.number_input(
             "Vesting Value per Share ($)",
             min_value=0.0,
-            value=st.session_state.single_vesting_price,
             step=1.0,
             key="single_vesting_value"
         )
@@ -527,7 +528,6 @@ with tab_single:
         actual_value_usd = st.number_input(
             "Current Share Value ($)",
             min_value=0.0,
-            value=st.session_state.single_current_price,
             step=1.0,
             key="single_current_value"
         )
@@ -536,7 +536,6 @@ with tab_single:
         usd_to_eur = st.number_input(
             "USD to EUR Rate",
             min_value=0.0,
-            value=st.session_state.single_usd_eur,
             step=0.01,
             key="single_usd_eur_input"
         )
@@ -631,17 +630,17 @@ with tab_compare:
     st.header("Compare Two Scenarios")
     st.caption("Enter details for two scenarios to compare side by side. Tax settings from the sidebar apply to both.")
 
-    # Initialize session state for comparison tab
-    if "compare_a_vesting_price" not in st.session_state:
-        st.session_state.compare_a_vesting_price = 100.0
-    if "compare_a_current_price" not in st.session_state:
-        st.session_state.compare_a_current_price = 150.0
-    if "compare_b_vesting_price" not in st.session_state:
-        st.session_state.compare_b_vesting_price = 80.0
-    if "compare_b_current_price" not in st.session_state:
-        st.session_state.compare_b_current_price = 150.0
-    if "compare_usd_eur_rate" not in st.session_state:
-        st.session_state.compare_usd_eur_rate = 0.92
+    # Initialize session state for comparison tab (use widget keys directly)
+    if "a_vesting_value" not in st.session_state:
+        st.session_state.a_vesting_value = 100.0
+    if "a_current_value" not in st.session_state:
+        st.session_state.a_current_value = 150.0
+    if "b_vesting_value" not in st.session_state:
+        st.session_state.b_vesting_value = 80.0
+    if "b_current_value" not in st.session_state:
+        st.session_state.b_current_value = 150.0
+    if "compare_usd_eur" not in st.session_state:
+        st.session_state.compare_usd_eur = 0.92
 
     # Shared settings
     st.subheader("🔧 Shared Settings")
@@ -658,7 +657,6 @@ with tab_compare:
         compare_usd_eur = st.number_input(
             "USD to EUR Rate",
             min_value=0.0,
-            value=st.session_state.compare_usd_eur_rate,
             step=0.01,
             key="compare_usd_eur"
         )
@@ -727,18 +725,18 @@ with tab_compare:
             # Fetch for Scenario A
             a_vp = fetch_stock_price(compare_ticker, a_vesting_date)
             if a_vp:
-                st.session_state.compare_a_vesting_price = a_vp
+                st.session_state.a_vesting_value = a_vp
             a_cp = fetch_stock_price(compare_ticker, a_sell_date)
             if a_cp:
-                st.session_state.compare_a_current_price = a_cp
+                st.session_state.a_current_value = a_cp
 
             # Fetch for Scenario B
             b_vp = fetch_stock_price(compare_ticker, b_vesting_date)
             if b_vp:
-                st.session_state.compare_b_vesting_price = b_vp
+                st.session_state.b_vesting_value = b_vp
             b_cp = fetch_stock_price(compare_ticker, b_sell_date)
             if b_cp:
-                st.session_state.compare_b_current_price = b_cp
+                st.session_state.b_current_value = b_cp
 
         st.rerun()
 
@@ -746,10 +744,10 @@ with tab_compare:
         with st.spinner("Fetching USD/EUR rate..."):
             rate = fetch_usd_eur_rate()
             if rate:
-                st.session_state.compare_usd_eur_rate = rate
+                st.session_state.compare_usd_eur = rate
         st.rerun()
 
-    # Value inputs (use session state)
+    # Value inputs (use session state via key)
     st.subheader("📈 Stock Values")
     col_val_a, col_val_b = st.columns(2)
 
@@ -758,7 +756,6 @@ with tab_compare:
         a_vesting_value = st.number_input(
             "Vesting Value ($)",
             min_value=0.0,
-            value=st.session_state.compare_a_vesting_price,
             step=1.0,
             key="a_vesting_value"
         )
@@ -766,7 +763,6 @@ with tab_compare:
         a_current_value = st.number_input(
             "Current Value ($)",
             min_value=0.0,
-            value=st.session_state.compare_a_current_price,
             step=1.0,
             key="a_current_value"
         )
@@ -776,7 +772,6 @@ with tab_compare:
         b_vesting_value = st.number_input(
             "Vesting Value ($)",
             min_value=0.0,
-            value=st.session_state.compare_b_vesting_price,
             step=1.0,
             key="b_vesting_value"
         )
@@ -784,7 +779,6 @@ with tab_compare:
         b_current_value = st.number_input(
             "Current Value ($)",
             min_value=0.0,
-            value=st.session_state.compare_b_current_price,
             step=1.0,
             key="b_current_value"
         )
