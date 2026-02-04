@@ -97,26 +97,64 @@ def fetch_usd_eur_rate():
     return None
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=300)  # 5 min cache
 def fetch_stock_price(ticker: str, target_date: date):
     """Fetch stock price for a given ticker and date."""
     try:
         stock = yf.Ticker(ticker)
-        start_date = target_date - timedelta(days=5)
-        end_date = target_date + timedelta(days=1)
+        # Fetch more days to ensure we get data even if target_date has none
+        start_date = target_date - timedelta(days=10)
+        end_date = date.today() + timedelta(days=1)
         hist = stock.history(start=start_date, end=end_date)
 
         if hist.empty:
             return None
 
         hist.index = hist.index.date
+
+        # First try exact date
         if target_date in hist.index:
             return float(hist.loc[target_date]["Close"])
-        else:
-            available_dates = [d for d in hist.index if d <= target_date]
-            if available_dates:
-                closest_date = max(available_dates)
-                return float(hist.loc[closest_date]["Close"])
+
+        # Fallback to closest date before or on target
+        available_dates = [d for d in hist.index if d <= target_date]
+        if available_dates:
+            closest_date = max(available_dates)
+            return float(hist.loc[closest_date]["Close"])
+
+        # If target is in the future, get the most recent available
+        if hist.index.size > 0:
+            return float(hist.iloc[-1]["Close"])
+
+    except Exception:
+        pass
+    return None
+
+
+def fetch_stock_price_no_cache(ticker: str, target_date: date):
+    """Fetch stock price without caching (for fresh data)."""
+    try:
+        stock = yf.Ticker(ticker)
+        start_date = target_date - timedelta(days=10)
+        end_date = date.today() + timedelta(days=1)
+        hist = stock.history(start=start_date, end=end_date)
+
+        if hist.empty:
+            return None
+
+        hist.index = hist.index.date
+
+        if target_date in hist.index:
+            return float(hist.loc[target_date]["Close"])
+
+        available_dates = [d for d in hist.index if d <= target_date]
+        if available_dates:
+            closest_date = max(available_dates)
+            return float(hist.loc[closest_date]["Close"])
+
+        if hist.index.size > 0:
+            return float(hist.iloc[-1]["Close"])
+
     except Exception:
         pass
     return None
@@ -498,12 +536,23 @@ with tab_single:
 
         if fetch_stock:
             with st.spinner(f"Fetching {stock_ticker} prices..."):
-                vp = fetch_stock_price(stock_ticker, vesting_date)
+                # Use no-cache for fresh data
+                vp = fetch_stock_price_no_cache(stock_ticker, vesting_date)
+                cp = fetch_stock_price_no_cache(stock_ticker, sell_date)
+
                 if vp:
                     st.session_state.single_vesting_value = vp
-                cp = fetch_stock_price(stock_ticker, sell_date)
                 if cp:
                     st.session_state.single_current_value = cp
+
+                # Show feedback
+                if not vp and not cp:
+                    st.error(f"Could not fetch prices for {stock_ticker}")
+                elif not vp:
+                    st.warning(f"Could not fetch vesting price for {vesting_date}")
+                elif not cp:
+                    st.warning(f"Could not fetch current price for {sell_date}")
+
             st.rerun()
 
         if fetch_currency:
@@ -722,21 +771,37 @@ with tab_compare:
 
     if fetch_compare:
         with st.spinner(f"Fetching {compare_ticker} prices..."):
-            # Fetch for Scenario A
-            a_vp = fetch_stock_price(compare_ticker, a_vesting_date)
+            # Fetch for Scenario A (use no-cache for fresh data)
+            a_vp = fetch_stock_price_no_cache(compare_ticker, a_vesting_date)
+            a_cp = fetch_stock_price_no_cache(compare_ticker, a_sell_date)
+
             if a_vp:
                 st.session_state.a_vesting_value = a_vp
-            a_cp = fetch_stock_price(compare_ticker, a_sell_date)
             if a_cp:
                 st.session_state.a_current_value = a_cp
 
             # Fetch for Scenario B
-            b_vp = fetch_stock_price(compare_ticker, b_vesting_date)
+            b_vp = fetch_stock_price_no_cache(compare_ticker, b_vesting_date)
+            b_cp = fetch_stock_price_no_cache(compare_ticker, b_sell_date)
+
             if b_vp:
                 st.session_state.b_vesting_value = b_vp
-            b_cp = fetch_stock_price(compare_ticker, b_sell_date)
             if b_cp:
                 st.session_state.b_current_value = b_cp
+
+            # Show feedback for any failures
+            errors = []
+            if not a_vp:
+                errors.append(f"A vesting ({a_vesting_date})")
+            if not a_cp:
+                errors.append(f"A current ({a_sell_date})")
+            if not b_vp:
+                errors.append(f"B vesting ({b_vesting_date})")
+            if not b_cp:
+                errors.append(f"B current ({b_sell_date})")
+
+            if errors:
+                st.warning(f"Could not fetch: {', '.join(errors)}")
 
         st.rerun()
 
