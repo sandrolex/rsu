@@ -32,6 +32,8 @@ from calculations import (
     calculate_rsu_taxes,
     get_regime_notes,
     get_marginal_tax_rate,
+    calculate_progressive_income_tax,
+    calculate_tax_on_additional_income,
 )
 
 
@@ -208,6 +210,112 @@ class TestMarginalTaxRate:
         assert get_marginal_tax_rate(29_316) == 0.30
 
 
+class TestProgressiveIncomeTax:
+    """Tests for calculate_progressive_income_tax function."""
+
+    def test_zero_income(self):
+        assert calculate_progressive_income_tax(0) == pytest.approx(0.0)
+
+    def test_negative_income(self):
+        assert calculate_progressive_income_tax(-1000) == pytest.approx(0.0)
+
+    def test_first_bracket_only(self):
+        # Income of €10,000 - all in 0% bracket
+        assert calculate_progressive_income_tax(10_000) == pytest.approx(0.0)
+
+    def test_at_first_bracket_boundary(self):
+        # Income of €11,497 - exactly at 0% boundary
+        assert calculate_progressive_income_tax(11_497) == pytest.approx(0.0)
+
+    def test_second_bracket(self):
+        # Income of €20,000
+        # €0 - €11,497 at 0% = €0
+        # €11,497 - €20,000 = €8,503 at 11% = €935.33
+        expected = 8_503 * 0.11
+        assert calculate_progressive_income_tax(20_000) == pytest.approx(expected, rel=0.01)
+
+    def test_third_bracket(self):
+        # Income of €50,000
+        # €0 - €11,497 at 0% = €0
+        # €11,497 - €29,315 = €17,818 at 11% = €1,959.98
+        # €29,315 - €50,000 = €20,685 at 30% = €6,205.50
+        expected = (17_818 * 0.11) + (20_685 * 0.30)
+        assert calculate_progressive_income_tax(50_000) == pytest.approx(expected, rel=0.01)
+
+    def test_fourth_bracket(self):
+        # Income of €100,000
+        # €0 - €11,497 at 0% = €0
+        # €11,497 - €29,315 = €17,818 at 11% = €1,959.98
+        # €29,315 - €83,823 = €54,508 at 30% = €16,352.40
+        # €83,823 - €100,000 = €16,177 at 41% = €6,632.57
+        expected = (17_818 * 0.11) + (54_508 * 0.30) + (16_177 * 0.41)
+        assert calculate_progressive_income_tax(100_000) == pytest.approx(expected, rel=0.01)
+
+    def test_fifth_bracket(self):
+        # Income of €200,000
+        # €0 - €11,497 at 0% = €0
+        # €11,497 - €29,315 = €17,818 at 11%
+        # €29,315 - €83,823 = €54,508 at 30%
+        # €83,823 - €180,294 = €96,471 at 41%
+        # €180,294 - €200,000 = €19,706 at 45%
+        expected = (17_818 * 0.11) + (54_508 * 0.30) + (96_471 * 0.41) + (19_706 * 0.45)
+        assert calculate_progressive_income_tax(200_000) == pytest.approx(expected, rel=0.01)
+
+
+class TestTaxOnAdditionalIncome:
+    """Tests for calculate_tax_on_additional_income function."""
+
+    def test_additional_income_same_bracket(self):
+        # Base income €50,000 (30% bracket), add €10,000
+        # Both are fully in 30% bracket, so tax on additional is 10,000 * 30% = 3,000
+        result = calculate_tax_on_additional_income(50_000, 10_000)
+        assert result == pytest.approx(3_000, rel=0.01)
+
+    def test_additional_income_spanning_brackets(self):
+        # Base income €25,000 (11% bracket), add €10,000 → total €35,000
+        # Tax without RSU: €11,497-€25,000 = €13,503 at 11% = €1,485.33
+        # Tax with RSU: €11,497-€29,315 = €17,818 at 11% + €29,315-€35,000 = €5,685 at 30%
+        #             = €1,959.98 + €1,705.50 = €3,665.48
+        # Tax on RSU = €3,665.48 - €1,485.33 = €2,180.15
+        result = calculate_tax_on_additional_income(25_000, 10_000)
+        expected = (17_818 * 0.11 + 5_685 * 0.30) - (13_503 * 0.11)
+        assert result == pytest.approx(expected, rel=0.01)
+
+    def test_additional_income_from_zero(self):
+        # Base income €0, add €20,000
+        # Tax on €20,000 = €8,503 at 11% = €935.33
+        result = calculate_tax_on_additional_income(0, 20_000)
+        expected = 8_503 * 0.11
+        assert result == pytest.approx(expected, rel=0.01)
+
+    def test_additional_income_zero(self):
+        # Adding zero should result in zero additional tax
+        result = calculate_tax_on_additional_income(50_000, 0)
+        assert result == pytest.approx(0.0)
+
+    def test_additional_income_into_highest_bracket(self):
+        # Base income €170,000, add €20,000 → total €190,000 (into 45% bracket)
+        result = calculate_tax_on_additional_income(170_000, 20_000)
+        # First €10,294 at 41%, remaining €9,706 at 45%
+        expected = (10_294 * 0.41) + (9_706 * 0.45)
+        assert result == pytest.approx(expected, rel=0.01)
+
+    def test_vs_flat_rate_comparison(self):
+        # Demonstrate that progressive calculation differs from flat TMI
+        base_income = 25_000  # TMI would be 11%
+        additional = 10_000
+
+        # Progressive calculation (correct)
+        progressive_tax = calculate_tax_on_additional_income(base_income, additional)
+
+        # Flat TMI calculation (incorrect - overstates)
+        tmi = get_marginal_tax_rate(base_income + additional)  # Would be 30%
+        flat_tax = additional * tmi  # 10,000 * 30% = 3,000
+
+        # Progressive should be LESS than flat TMI approach
+        assert progressive_tax < flat_tax
+
+
 class TestCurrencyConversion:
     """Tests for convert_usd_to_eur function."""
 
@@ -310,21 +418,45 @@ class TestAcquisitionSocialSecurity:
 class TestAcquisitionIncomeTax:
     """Tests for calculate_acquisition_income_tax function."""
 
-    def test_default_rate(self):
-        result = calculate_acquisition_income_tax(1000.0, 0.30)
+    def test_flat_rate(self):
+        result = calculate_acquisition_income_tax(1000.0, tax_rate=0.30)
         assert result == pytest.approx(300.0)
 
-    def test_zero_gain(self):
-        result = calculate_acquisition_income_tax(0.0, 0.30)
+    def test_zero_gain_flat(self):
+        result = calculate_acquisition_income_tax(0.0, tax_rate=0.30)
         assert result == pytest.approx(0.0)
 
-    def test_custom_rate(self):
-        result = calculate_acquisition_income_tax(1000.0, 0.41)
+    def test_custom_flat_rate(self):
+        result = calculate_acquisition_income_tax(1000.0, tax_rate=0.41)
         assert result == pytest.approx(410.0)
 
-    def test_highest_rate(self):
-        result = calculate_acquisition_income_tax(1000.0, 0.45)
+    def test_highest_flat_rate(self):
+        result = calculate_acquisition_income_tax(1000.0, tax_rate=0.45)
         assert result == pytest.approx(450.0)
+
+    def test_progressive_with_annual_income(self):
+        # Base income €50,000, gain €10,000 - all in 30% bracket
+        result = calculate_acquisition_income_tax(10_000, annual_income=50_000)
+        assert result == pytest.approx(3_000, rel=0.01)
+
+    def test_progressive_spanning_brackets(self):
+        # Base income €25,000, gain €10,000 - spans 11% and 30% brackets
+        result = calculate_acquisition_income_tax(10_000, annual_income=25_000)
+        # Progressive tax should be less than 30% flat rate
+        assert result < 3_000
+        assert result > 0
+
+    def test_progressive_from_zero_income(self):
+        # Base income €0, gain €20,000
+        result = calculate_acquisition_income_tax(20_000, annual_income=0)
+        # €0-€11,497 at 0% + €11,497-€20,000 at 11%
+        expected = 8_503 * 0.11
+        assert result == pytest.approx(expected, rel=0.01)
+
+    def test_default_when_no_params(self):
+        # When neither annual_income nor tax_rate provided, default to 30%
+        result = calculate_acquisition_income_tax(1000.0)
+        assert result == pytest.approx(300.0)
 
 
 class TestCapitalGainTax:
@@ -672,6 +804,88 @@ class TestSeparateTaxation:
         # PFU (30%): 5,000 * 0.30 = 1,500
         assert result.capital_gain == pytest.approx(5_000)
         assert result.capital_gain_tax == pytest.approx(1_500)
+
+
+class TestFullCalculationWithProgressiveTax:
+    """Tests for calculate_rsu_taxes using progressive tax (annual_income)."""
+
+    def test_progressive_tax_in_same_bracket(self):
+        """Test with annual income that puts gain fully in one bracket."""
+        input_data = RSUInput(
+            vesting_date=date(2024, 1, 1),
+            sell_date=date(2025, 1, 1),
+            num_shares=100,
+            vesting_value_usd=100.0,
+            current_value_usd=150.0,
+            usd_to_eur=1.0,
+            regime=TaxRegime.MACRON_I,
+            annual_income=50_000,  # 30% bracket
+        )
+
+        result = calculate_rsu_taxes(input_data)
+
+        # Acquisition gain: 100 * 100 = 10,000 (no relief - under 2 years)
+        # At €50,000 income, adding €10,000 stays in 30% bracket
+        # So tax should be approximately 10,000 * 0.30 = 3,000
+        assert result.acquisition_income_tax == pytest.approx(3_000, rel=0.01)
+
+    def test_progressive_tax_spanning_brackets(self):
+        """Test with annual income that causes gain to span brackets."""
+        input_data = RSUInput(
+            vesting_date=date(2024, 1, 1),
+            sell_date=date(2025, 1, 1),
+            num_shares=100,
+            vesting_value_usd=100.0,
+            current_value_usd=150.0,
+            usd_to_eur=1.0,
+            regime=TaxRegime.MACRON_I,
+            annual_income=25_000,  # Near boundary of 11%/30% brackets
+        )
+
+        result = calculate_rsu_taxes(input_data)
+
+        # Progressive tax should be LESS than flat 30% rate on €10,000
+        flat_rate_tax = 10_000 * 0.30  # 3,000
+        assert result.acquisition_income_tax < flat_rate_tax
+
+    def test_progressive_with_taper_relief(self):
+        """Test progressive tax with 50% taper relief applied."""
+        input_data = RSUInput(
+            vesting_date=date(2022, 1, 1),
+            sell_date=date(2025, 1, 1),  # 3 years - 50% relief
+            num_shares=100,
+            vesting_value_usd=100.0,
+            current_value_usd=150.0,
+            usd_to_eur=1.0,
+            regime=TaxRegime.MACRON_I,
+            annual_income=50_000,
+        )
+
+        result = calculate_rsu_taxes(input_data)
+
+        # Acquisition gain: 10,000, after 50% relief: 5,000
+        # At €50,000 income, adding €5,000 stays in 30% bracket
+        assert result.acquisition_gain == pytest.approx(10_000)
+        assert result.acquisition_gain_after_relief == pytest.approx(5_000)
+        assert result.acquisition_income_tax == pytest.approx(1_500, rel=0.01)
+
+    def test_flat_rate_fallback(self):
+        """Test that flat rate is used when annual_income not provided."""
+        input_data = RSUInput(
+            vesting_date=date(2024, 1, 1),
+            sell_date=date(2025, 1, 1),
+            num_shares=100,
+            vesting_value_usd=100.0,
+            current_value_usd=150.0,
+            usd_to_eur=1.0,
+            regime=TaxRegime.MACRON_I,
+            acquisition_tax_rate=0.30,  # Flat rate
+        )
+
+        result = calculate_rsu_taxes(input_data)
+
+        # Should use flat 30% rate
+        assert result.acquisition_income_tax == pytest.approx(10_000 * 0.30)
 
 
 class TestEdgeCases:

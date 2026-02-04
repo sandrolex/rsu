@@ -48,8 +48,12 @@ class RSUInput:
     vesting_value_usd: float
     current_value_usd: float
     usd_to_eur: float
-    acquisition_tax_rate: float = 0.30  # Progressive rate (up to 45%)
     regime: TaxRegime = TaxRegime.MACRON_I
+    # For progressive tax calculation, provide ONE of:
+    # - annual_income: Your annual taxable income (RSU gain will be added and taxed progressively)
+    # - acquisition_tax_rate: Manual rate to apply (simplified, may overstate tax)
+    annual_income: Optional[float] = None
+    acquisition_tax_rate: Optional[float] = None  # Fallback if annual_income not provided
 
 
 @dataclass
@@ -116,21 +120,63 @@ def get_marginal_tax_rate(annual_income: float) -> float:
     return rate
 
 
-def calculate_progressive_tax(taxable_amount: float, annual_income: float) -> float:
+def calculate_progressive_income_tax(taxable_income: float) -> float:
     """
-    Calculate tax on an amount using progressive rates based on total annual income.
+    Calculate French income tax using progressive brackets.
 
-    The taxable_amount is taxed at the marginal rate determined by annual_income.
+    Tax is calculated bracket by bracket:
+    - 0% on income from €0 to €11,497
+    - 11% on income from €11,497 to €29,315
+    - 30% on income from €29,315 to €83,823
+    - 41% on income from €83,823 to €180,294
+    - 45% on income above €180,294
 
     Args:
-        taxable_amount: Amount to be taxed in EUR
-        annual_income: Total annual taxable income (to determine bracket)
+        taxable_income: Total taxable income in EUR
 
     Returns:
-        Tax amount in EUR
+        Total income tax in EUR
     """
-    marginal_rate = get_marginal_tax_rate(annual_income)
-    return taxable_amount * marginal_rate
+    if taxable_income <= 0:
+        return 0.0
+
+    tax = 0.0
+    brackets = FRENCH_TAX_BRACKETS_2025
+
+    for i in range(len(brackets)):
+        threshold, rate = brackets[i]
+        next_threshold = brackets[i + 1][0] if i + 1 < len(brackets) else float("inf")
+
+        if taxable_income <= threshold:
+            break
+
+        # Calculate taxable amount in this bracket
+        bracket_ceiling = min(taxable_income, next_threshold)
+        bracket_income = bracket_ceiling - threshold
+        tax += bracket_income * rate
+
+    return tax
+
+
+def calculate_tax_on_additional_income(
+    base_income: float, additional_income: float
+) -> float:
+    """
+    Calculate the tax specifically on additional income (e.g., RSU acquisition gain).
+
+    This correctly handles cases where the additional income spans multiple brackets.
+    The tax is calculated as: tax(base + additional) - tax(base)
+
+    Args:
+        base_income: Existing annual income in EUR (before RSU)
+        additional_income: Additional income to be taxed in EUR (RSU gain)
+
+    Returns:
+        Tax attributable to the additional income in EUR
+    """
+    tax_with_additional = calculate_progressive_income_tax(base_income + additional_income)
+    tax_base_only = calculate_progressive_income_tax(base_income)
+    return tax_with_additional - tax_base_only
 
 
 def calculate_years_held(vesting_date: date, sell_date: date) -> float:
@@ -326,23 +372,35 @@ def calculate_acquisition_social_security(
 
 
 def calculate_acquisition_income_tax(
-    acquisition_gain_after_relief: float, tax_rate: float
+    acquisition_gain_after_relief: float,
+    annual_income: Optional[float] = None,
+    tax_rate: Optional[float] = None,
 ) -> float:
     """
     Calculate income tax on acquisition gain (after taper relief).
 
-    Uses progressive income tax rate.
-
-    Formula: acquisition_gain_after_relief × tax_rate
+    Uses French progressive brackets when annual_income is provided.
+    Falls back to flat rate if only tax_rate is provided.
 
     Args:
         acquisition_gain_after_relief: Acquisition gain after relief in EUR
-        tax_rate: Progressive income tax rate (0% to 45%)
+        annual_income: Annual taxable income (for progressive calculation)
+        tax_rate: Flat rate fallback (0% to 45%), used if annual_income is None
 
     Returns:
         Income tax on acquisition gain in EUR
     """
-    return acquisition_gain_after_relief * tax_rate
+    if annual_income is not None:
+        # Use proper progressive calculation
+        return calculate_tax_on_additional_income(
+            annual_income, acquisition_gain_after_relief
+        )
+    elif tax_rate is not None:
+        # Fallback to flat rate (simplified)
+        return acquisition_gain_after_relief * tax_rate
+    else:
+        # Default to 30% if nothing provided
+        return acquisition_gain_after_relief * 0.30
 
 
 def calculate_capital_gain_tax(capital_gain: float) -> float:
@@ -532,7 +590,9 @@ def calculate_rsu_taxes(input_data: RSUInput) -> RSUResult:
         acquisition_gain_after_relief, input_data.regime, acquisition_gain
     )
     acquisition_income_tax = calculate_acquisition_income_tax(
-        acquisition_gain_after_relief, input_data.acquisition_tax_rate
+        acquisition_gain_after_relief,
+        annual_income=input_data.annual_income,
+        tax_rate=input_data.acquisition_tax_rate,
     )
 
     # Calculate tax on capital gain (PFU - includes social security)

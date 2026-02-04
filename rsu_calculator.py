@@ -12,6 +12,7 @@ from calculations import (
     CAPITAL_GAIN_PFU_RATE,
     FRENCH_TAX_BRACKETS_2025,
     get_marginal_tax_rate,
+    calculate_tax_on_additional_income,
 )
 
 st.set_page_config(page_title="RSU Selling Calculator", page_icon="💰")
@@ -133,6 +134,9 @@ tax_input_method = st.sidebar.radio(
     help="Choose manual to set the rate directly, or automatic to calculate based on your annual income."
 )
 
+use_progressive_tax = tax_input_method == "Automatic (from annual income)"
+annual_income_value = None  # Will store annual income for progressive calculation
+
 if tax_input_method == "Manual (slider)":
     acquisition_tax_rate = st.sidebar.slider(
         "Marginal Tax Rate (TMI)",
@@ -141,17 +145,17 @@ if tax_input_method == "Manual (slider)":
         value=0.30,
         step=0.01,
         format="%.0f%%",
-        help="Your marginal tax rate (TMI) based on your tax bracket (0%, 11%, 30%, 41%, or 45%)"
+        help="Your marginal tax rate (TMI) based on your tax bracket. Note: This applies the rate to the entire gain, which may overstate tax if your gain spans multiple brackets."
     )
 else:
-    annual_income = st.sidebar.number_input(
+    annual_income_value = st.sidebar.number_input(
         "Annual Taxable Income (€)",
         min_value=0,
         value=50_000,
         step=1_000,
-        help="Your total annual taxable income in EUR (excluding the RSU gain)"
+        help="Your total annual taxable income in EUR (excluding the RSU gain). Tax will be calculated progressively across brackets."
     )
-    acquisition_tax_rate = get_marginal_tax_rate(annual_income)
+    acquisition_tax_rate = get_marginal_tax_rate(annual_income_value)
 
     # Show the tax brackets
     st.sidebar.caption("**French Tax Brackets 2025:**")
@@ -166,6 +170,7 @@ else:
     """
     st.sidebar.markdown(bracket_info)
     st.sidebar.success(f"**Your TMI: {acquisition_tax_rate*100:.0f}%**")
+    st.sidebar.caption("💡 Tax is calculated progressively across brackets, not at flat TMI rate.")
 
 st.sidebar.markdown("---")
 
@@ -372,7 +377,16 @@ else:
 
 # Taxes on acquisition gain (after taper relief)
 acquisition_social_security = acquisition_gain_after_relief * effective_social_rate
-acquisition_income_tax = acquisition_gain_after_relief * acquisition_tax_rate
+
+# Calculate income tax on acquisition gain
+if use_progressive_tax and annual_income_value is not None:
+    # Use proper progressive calculation across brackets
+    acquisition_income_tax = calculate_tax_on_additional_income(
+        annual_income_value, acquisition_gain_after_relief
+    )
+else:
+    # Use flat rate (simplified)
+    acquisition_income_tax = acquisition_gain_after_relief * acquisition_tax_rate
 
 # Tax on capital gain (PFU - flat 30%, includes social security)
 if capital_gain > 0:
@@ -397,7 +411,11 @@ total_loss_in_taxes = gross_proceed - net_in_pocket
 tax_percentage = (total_loss_in_taxes / gross_proceed * 100) if gross_proceed > 0 else 0
 
 # Display regime info
-st.info(f"**Regime:** {regime_name} | **Taper Relief:** {relief_description} | **TMI:** {acquisition_tax_rate*100:.0f}%")
+if use_progressive_tax and annual_income_value is not None:
+    effective_income_tax_rate = (acquisition_income_tax / acquisition_gain_after_relief * 100) if acquisition_gain_after_relief > 0 else 0
+    st.info(f"**Regime:** {regime_name} | **Taper Relief:** {relief_description} | **Income Tax:** Progressive (effective {effective_income_tax_rate:.1f}%)")
+else:
+    st.info(f"**Regime:** {regime_name} | **Taper Relief:** {relief_description} | **TMI:** {acquisition_tax_rate*100:.0f}%")
 
 # Display holding period info
 col_info1, col_info2 = st.columns(2)
@@ -498,11 +516,19 @@ with col_t1:
         help=f"**Formula:** Acquisition Gain (after relief) × Social Security Rate\n\n= €{acquisition_gain_after_relief:,.2f} × {effective_social_rate} = €{acquisition_social_security:,.2f}"
     )
 with col_t2:
-    st.metric(
-        f"Income Tax ({acquisition_tax_rate*100:.0f}%)",
-        f"€{acquisition_income_tax:,.2f}",
-        help=f"**Formula:** Acquisition Gain (after relief) × Marginal Tax Rate\n\n= €{acquisition_gain_after_relief:,.2f} × {acquisition_tax_rate} = €{acquisition_income_tax:,.2f}"
-    )
+    if use_progressive_tax and annual_income_value is not None:
+        effective_rate = (acquisition_income_tax / acquisition_gain_after_relief) if acquisition_gain_after_relief > 0 else 0
+        st.metric(
+            f"Income Tax (Progressive)",
+            f"€{acquisition_income_tax:,.2f}",
+            help=f"**Progressive calculation:**\n\nBase income: €{annual_income_value:,.2f}\n+ RSU gain: €{acquisition_gain_after_relief:,.2f}\n\nTax is calculated as: Tax(base + gain) - Tax(base)\n\nEffective rate on gain: {effective_rate*100:.1f}%"
+        )
+    else:
+        st.metric(
+            f"Income Tax ({acquisition_tax_rate*100:.0f}%)",
+            f"€{acquisition_income_tax:,.2f}",
+            help=f"**Formula:** Acquisition Gain (after relief) × Marginal Tax Rate\n\n= €{acquisition_gain_after_relief:,.2f} × {acquisition_tax_rate} = €{acquisition_income_tax:,.2f}"
+        )
 
 st.markdown("**Capital Gain Tax** (PFU - includes 12.8% income + 17.2% social)")
 col_t3, col_t4 = st.columns(2)
@@ -552,11 +578,19 @@ with col_f3:
 # Summary table
 st.divider()
 with st.expander("📋 Detailed Summary"):
+    if use_progressive_tax and annual_income_value is not None:
+        effective_rate_display = f"Progressive (effective {(acquisition_income_tax / acquisition_gain_after_relief * 100) if acquisition_gain_after_relief > 0 else 0:.1f}%)"
+        income_info = f"| **Annual Income** | €{annual_income_value:,.2f} |"
+    else:
+        effective_rate_display = f"{acquisition_tax_rate*100:.0f}%"
+        income_info = ""
+
     summary_data = f"""
     | Item | Value |
     |------|-------|
     | **Tax Regime** | {regime_name} |
-    | **Marginal Tax Rate (TMI)** | {acquisition_tax_rate*100:.0f}% |
+    | **Income Tax Method** | {effective_rate_display} |
+    {income_info}
     | **Shares to Sell** | {num_shares} |
     | **Current Value (USD)** | ${actual_value_usd:,.2f} |
     | **USD/EUR Rate** | {usd_to_eur} |
@@ -572,7 +606,7 @@ with st.expander("📋 Detailed Summary"):
     | **Capital Gain** | €{capital_gain:,.2f} |
     | --- | --- |
     | **Acquisition Social Security ({effective_social_rate*100:.1f}%)** | €{acquisition_social_security:,.2f} |
-    | **Acquisition Income Tax ({acquisition_tax_rate*100:.0f}%)** | €{acquisition_income_tax:,.2f} |
+    | **Acquisition Income Tax ({effective_rate_display})** | €{acquisition_income_tax:,.2f} |
     | **Capital Gain Tax (PFU {CAPITAL_GAIN_PFU_RATE*100:.0f}%)** | €{capital_gain_tax:,.2f} |
     """
 
