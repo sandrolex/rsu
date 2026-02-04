@@ -631,6 +631,18 @@ with tab_compare:
     st.header("Compare Two Scenarios")
     st.caption("Enter details for two scenarios to compare side by side. Tax settings from the sidebar apply to both.")
 
+    # Initialize session state for comparison tab
+    if "compare_a_vesting_price" not in st.session_state:
+        st.session_state.compare_a_vesting_price = 100.0
+    if "compare_a_current_price" not in st.session_state:
+        st.session_state.compare_a_current_price = 150.0
+    if "compare_b_vesting_price" not in st.session_state:
+        st.session_state.compare_b_vesting_price = 80.0
+    if "compare_b_current_price" not in st.session_state:
+        st.session_state.compare_b_current_price = 150.0
+    if "compare_usd_eur_rate" not in st.session_state:
+        st.session_state.compare_usd_eur_rate = 0.92
+
     # Shared settings
     st.subheader("🔧 Shared Settings")
     col_shared1, col_shared2, col_shared3 = st.columns(3)
@@ -642,23 +654,18 @@ with tab_compare:
             key="compare_ticker"
         ).upper().strip()
 
-    with col_shared2:
-        if st.button(f"🔄 Fetch {compare_ticker} Prices", key="compare_fetch"):
-            # Will fetch when scenarios are defined
-            pass
-
     with col_shared3:
         compare_usd_eur = st.number_input(
             "USD to EUR Rate",
             min_value=0.0,
-            value=0.92,
+            value=st.session_state.compare_usd_eur_rate,
             step=0.01,
             key="compare_usd_eur"
         )
 
     st.divider()
 
-    # Two scenarios side by side
+    # Two scenarios side by side - dates first
     col_a, col_b = st.columns(2)
 
     with col_a:
@@ -684,22 +691,6 @@ with tab_compare:
             key="a_shares"
         )
 
-        a_vesting_value = st.number_input(
-            "Vesting Value ($)",
-            min_value=0.0,
-            value=100.0,
-            step=1.0,
-            key="a_vesting_value"
-        )
-
-        a_current_value = st.number_input(
-            "Current Value ($)",
-            min_value=0.0,
-            value=150.0,
-            step=1.0,
-            key="a_current_value"
-        )
-
     with col_b:
         st.subheader("📊 Scenario B")
 
@@ -723,10 +714,69 @@ with tab_compare:
             key="b_shares"
         )
 
+    # Fetch button (now after dates are defined)
+    st.divider()
+    col_fetch1, col_fetch2 = st.columns(2)
+    with col_fetch1:
+        fetch_compare = st.button(f"🔄 Fetch {compare_ticker} Prices for Both Scenarios", key="compare_fetch", use_container_width=True)
+    with col_fetch2:
+        fetch_compare_currency = st.button("🔄 Fetch USD/EUR Rate", key="compare_fetch_currency", use_container_width=True)
+
+    if fetch_compare:
+        with st.spinner(f"Fetching {compare_ticker} prices..."):
+            # Fetch for Scenario A
+            a_vp = fetch_stock_price(compare_ticker, a_vesting_date)
+            if a_vp:
+                st.session_state.compare_a_vesting_price = a_vp
+            a_cp = fetch_stock_price(compare_ticker, a_sell_date)
+            if a_cp:
+                st.session_state.compare_a_current_price = a_cp
+
+            # Fetch for Scenario B
+            b_vp = fetch_stock_price(compare_ticker, b_vesting_date)
+            if b_vp:
+                st.session_state.compare_b_vesting_price = b_vp
+            b_cp = fetch_stock_price(compare_ticker, b_sell_date)
+            if b_cp:
+                st.session_state.compare_b_current_price = b_cp
+
+        st.rerun()
+
+    if fetch_compare_currency:
+        with st.spinner("Fetching USD/EUR rate..."):
+            rate = fetch_usd_eur_rate()
+            if rate:
+                st.session_state.compare_usd_eur_rate = rate
+        st.rerun()
+
+    # Value inputs (use session state)
+    st.subheader("📈 Stock Values")
+    col_val_a, col_val_b = st.columns(2)
+
+    with col_val_a:
+        st.markdown("**Scenario A**")
+        a_vesting_value = st.number_input(
+            "Vesting Value ($)",
+            min_value=0.0,
+            value=st.session_state.compare_a_vesting_price,
+            step=1.0,
+            key="a_vesting_value"
+        )
+
+        a_current_value = st.number_input(
+            "Current Value ($)",
+            min_value=0.0,
+            value=st.session_state.compare_a_current_price,
+            step=1.0,
+            key="a_current_value"
+        )
+
+    with col_val_b:
+        st.markdown("**Scenario B**")
         b_vesting_value = st.number_input(
             "Vesting Value ($)",
             min_value=0.0,
-            value=80.0,
+            value=st.session_state.compare_b_vesting_price,
             step=1.0,
             key="b_vesting_value"
         )
@@ -734,7 +784,7 @@ with tab_compare:
         b_current_value = st.number_input(
             "Current Value ($)",
             min_value=0.0,
-            value=150.0,
+            value=st.session_state.compare_b_current_price,
             step=1.0,
             key="b_current_value"
         )
