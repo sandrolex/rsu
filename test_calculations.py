@@ -11,6 +11,8 @@ from calculations import (
     RSUInput,
     RSUResult,
     MACRON_III_THRESHOLD,
+    CAPITAL_GAIN_PFU_RATE,
+    FRENCH_TAX_BRACKETS_2025,
     calculate_years_held,
     calculate_taper_relief,
     calculate_taper_relief_macron_i,
@@ -20,16 +22,16 @@ from calculations import (
     calculate_acquisition_gain,
     calculate_acquisition_gain_after_relief,
     calculate_capital_gain,
-    calculate_tributable_gain,
-    calculate_social_security_taxes,
-    calculate_acquisition_taxes,
-    calculate_capital_gain_taxes,
+    calculate_acquisition_social_security,
+    calculate_acquisition_income_tax,
+    calculate_capital_gain_tax,
     calculate_salariale_contribution,
     calculate_total_taxes,
     calculate_net_in_pocket,
     calculate_effective_tax_rate,
     calculate_rsu_taxes,
     get_regime_notes,
+    get_marginal_tax_rate,
 )
 
 
@@ -178,6 +180,34 @@ class TestTaperReliefDispatch:
         assert rate == 0.0
 
 
+class TestMarginalTaxRate:
+    """Tests for get_marginal_tax_rate function."""
+
+    def test_zero_income(self):
+        assert get_marginal_tax_rate(0) == 0.0
+
+    def test_first_bracket(self):
+        assert get_marginal_tax_rate(10_000) == 0.0
+
+    def test_second_bracket(self):
+        assert get_marginal_tax_rate(20_000) == 0.11
+
+    def test_third_bracket(self):
+        assert get_marginal_tax_rate(50_000) == 0.30
+
+    def test_fourth_bracket(self):
+        assert get_marginal_tax_rate(100_000) == 0.41
+
+    def test_fifth_bracket(self):
+        assert get_marginal_tax_rate(200_000) == 0.45
+
+    def test_boundary_second_bracket(self):
+        assert get_marginal_tax_rate(11_498) == 0.11
+
+    def test_boundary_third_bracket(self):
+        assert get_marginal_tax_rate(29_316) == 0.30
+
+
 class TestCurrencyConversion:
     """Tests for convert_usd_to_eur function."""
 
@@ -253,72 +283,70 @@ class TestCapitalGain:
         assert result == pytest.approx(0.0)
 
 
-class TestTributableGain:
-    """Tests for calculate_tributable_gain function."""
-
-    def test_positive_values(self):
-        result = calculate_tributable_gain(500.0, 300.0)
-        assert result == pytest.approx(800.0)
-
-    def test_with_capital_loss(self):
-        result = calculate_tributable_gain(500.0, -100.0)
-        assert result == pytest.approx(400.0)
-
-
-class TestSocialSecurityTaxes:
-    """Tests for calculate_social_security_taxes function."""
+class TestAcquisitionSocialSecurity:
+    """Tests for calculate_acquisition_social_security function."""
 
     def test_macron_i_rate(self):
-        result = calculate_social_security_taxes(1000.0, TaxRegime.MACRON_I)
+        result = calculate_acquisition_social_security(1000.0, TaxRegime.MACRON_I)
         assert result == pytest.approx(172.0)
 
     def test_macron_iii_under_threshold(self):
-        result = calculate_social_security_taxes(
+        result = calculate_acquisition_social_security(
             1000.0, TaxRegime.MACRON_III, acquisition_gain=100_000
         )
         assert result == pytest.approx(172.0)
 
     def test_macron_iii_over_threshold(self):
-        result = calculate_social_security_taxes(
+        result = calculate_acquisition_social_security(
             1000.0, TaxRegime.MACRON_III, acquisition_gain=400_000
         )
         assert result == pytest.approx(97.0)  # 9.7% activity rate
 
     def test_unrestricted_rate(self):
-        result = calculate_social_security_taxes(1000.0, TaxRegime.UNRESTRICTED)
+        result = calculate_acquisition_social_security(1000.0, TaxRegime.UNRESTRICTED)
         assert result == pytest.approx(97.0)  # 9.7% activity rate
 
 
-class TestAcquisitionTaxes:
-    """Tests for calculate_acquisition_taxes function."""
+class TestAcquisitionIncomeTax:
+    """Tests for calculate_acquisition_income_tax function."""
 
     def test_default_rate(self):
-        result = calculate_acquisition_taxes(1000.0, 0.30)
+        result = calculate_acquisition_income_tax(1000.0, 0.30)
         assert result == pytest.approx(300.0)
 
     def test_zero_gain(self):
-        result = calculate_acquisition_taxes(0.0, 0.30)
+        result = calculate_acquisition_income_tax(0.0, 0.30)
         assert result == pytest.approx(0.0)
 
     def test_custom_rate(self):
-        result = calculate_acquisition_taxes(1000.0, 0.25)
-        assert result == pytest.approx(250.0)
+        result = calculate_acquisition_income_tax(1000.0, 0.41)
+        assert result == pytest.approx(410.0)
+
+    def test_highest_rate(self):
+        result = calculate_acquisition_income_tax(1000.0, 0.45)
+        assert result == pytest.approx(450.0)
 
 
-class TestCapitalGainTaxes:
-    """Tests for calculate_capital_gain_taxes function."""
+class TestCapitalGainTax:
+    """Tests for calculate_capital_gain_tax function (PFU 30%)."""
 
     def test_positive_gain(self):
-        result = calculate_capital_gain_taxes(500.0, 0.30)
-        assert result == pytest.approx(150.0)
+        # Capital gain is taxed at flat 30% PFU rate
+        result = calculate_capital_gain_tax(500.0)
+        assert result == pytest.approx(150.0)  # 500 * 0.30 = 150
 
     def test_negative_gain_no_tax(self):
-        result = calculate_capital_gain_taxes(-200.0, 0.30)
+        result = calculate_capital_gain_tax(-200.0)
         assert result == pytest.approx(0.0)
 
     def test_zero_gain(self):
-        result = calculate_capital_gain_taxes(0.0, 0.30)
+        result = calculate_capital_gain_tax(0.0)
         assert result == pytest.approx(0.0)
+
+    def test_pfu_rate_applied(self):
+        # Verify flat 30% PFU rate is used
+        result = calculate_capital_gain_tax(1000.0)
+        assert result == pytest.approx(300.0)  # 1000 * 0.30 = 300
 
 
 class TestSalarialeContribution:
@@ -437,7 +465,7 @@ class TestFullCalculationMacronI:
             vesting_value_usd=100.0,
             current_value_usd=150.0,
             usd_to_eur=0.92,
-            tax_rate=0.30,
+            acquisition_tax_rate=0.30,
             regime=TaxRegime.MACRON_I,
         )
 
@@ -458,7 +486,7 @@ class TestFullCalculationMacronI:
             vesting_value_usd=100.0,
             current_value_usd=150.0,
             usd_to_eur=0.92,
-            tax_rate=0.30,
+            acquisition_tax_rate=0.30,
             regime=TaxRegime.MACRON_I,
         )
 
@@ -479,7 +507,7 @@ class TestFullCalculationMacronI:
             vesting_value_usd=100.0,
             current_value_usd=150.0,
             usd_to_eur=0.92,
-            tax_rate=0.30,
+            acquisition_tax_rate=0.30,
             regime=TaxRegime.MACRON_I,
         )
 
@@ -504,7 +532,7 @@ class TestFullCalculationMacronIII:
             vesting_value_usd=100.0,
             current_value_usd=150.0,
             usd_to_eur=0.92,
-            tax_rate=0.30,
+            acquisition_tax_rate=0.30,
             regime=TaxRegime.MACRON_III,
         )
 
@@ -514,9 +542,9 @@ class TestFullCalculationMacronIII:
         assert result.has_taper_relief is True
         assert result.taper_relief_rate == 0.5
         assert result.salariale_contribution == 0.0
-        # Social security at patrimony rate (17.2%)
-        assert result.social_security_taxes == pytest.approx(
-            result.tributable_gain * 0.172
+        # Social security on acquisition gain at patrimony rate (17.2%)
+        assert result.acquisition_social_security == pytest.approx(
+            result.acquisition_gain_after_relief * 0.172
         )
 
     def test_macron_iii_over_threshold(self):
@@ -528,7 +556,7 @@ class TestFullCalculationMacronIII:
             vesting_value_usd=100.0,
             current_value_usd=150.0,
             usd_to_eur=0.92,
-            tax_rate=0.30,
+            acquisition_tax_rate=0.30,
             regime=TaxRegime.MACRON_III,
         )
 
@@ -540,9 +568,9 @@ class TestFullCalculationMacronIII:
         assert result.salariale_contribution == pytest.approx(
             result.acquisition_gain * 0.10
         )
-        # Social security at activity rate (9.7%)
-        assert result.social_security_taxes == pytest.approx(
-            result.tributable_gain * 0.097
+        # Social security on acquisition gain at activity rate (9.7%)
+        assert result.acquisition_social_security == pytest.approx(
+            result.acquisition_gain_after_relief * 0.097
         )
 
 
@@ -558,7 +586,7 @@ class TestFullCalculationUnrestricted:
             vesting_value_usd=100.0,
             current_value_usd=150.0,
             usd_to_eur=0.92,
-            tax_rate=0.30,
+            acquisition_tax_rate=0.30,
             regime=TaxRegime.UNRESTRICTED,
         )
 
@@ -569,9 +597,9 @@ class TestFullCalculationUnrestricted:
         assert result.taper_relief_rate == 0.0
         assert result.acquisition_gain_after_relief == result.acquisition_gain
         assert result.salariale_contribution == 0.0
-        # Social security at activity rate (9.7%)
-        assert result.social_security_taxes == pytest.approx(
-            result.tributable_gain * 0.097
+        # Social security on acquisition gain at activity rate (9.7%)
+        assert result.acquisition_social_security == pytest.approx(
+            result.acquisition_gain_after_relief * 0.097
         )
 
 
@@ -587,17 +615,63 @@ class TestFullCalculationWithCapitalLoss:
             vesting_value_usd=150.0,  # Higher vesting value
             current_value_usd=100.0,  # Lower current value = loss
             usd_to_eur=0.92,
-            tax_rate=0.30,
+            acquisition_tax_rate=0.30,
             regime=TaxRegime.MACRON_I,
         )
 
         result = calculate_rsu_taxes(input_data)
 
         assert result.capital_gain < 0
-        assert result.capital_gain_taxes == 0.0
+        assert result.capital_gain_tax == 0.0
         # Still have taper relief on acquisition gain
         assert result.has_taper_relief is True
         assert result.taper_relief_rate == 0.5
+
+
+class TestSeparateTaxation:
+    """Tests to verify acquisition and capital gains are taxed separately."""
+
+    def test_acquisition_social_security_on_relief_amount(self):
+        """Verify social security is calculated on acquisition gain after relief."""
+        input_data = RSUInput(
+            vesting_date=date(2022, 1, 1),
+            sell_date=date(2025, 1, 1),  # 3 years - 50% relief
+            num_shares=100,
+            vesting_value_usd=100.0,
+            current_value_usd=150.0,
+            usd_to_eur=1.0,
+            acquisition_tax_rate=0.30,
+            regime=TaxRegime.MACRON_I,
+        )
+
+        result = calculate_rsu_taxes(input_data)
+
+        # Acquisition gain: 100 * 100 = 10,000
+        # After 50% relief: 5,000
+        # Social security (17.2%): 5,000 * 0.172 = 860
+        assert result.acquisition_gain == pytest.approx(10_000)
+        assert result.acquisition_gain_after_relief == pytest.approx(5_000)
+        assert result.acquisition_social_security == pytest.approx(860)
+
+    def test_capital_gain_taxed_at_pfu(self):
+        """Verify capital gain is taxed at flat 30% PFU."""
+        input_data = RSUInput(
+            vesting_date=date(2022, 1, 1),
+            sell_date=date(2025, 1, 1),
+            num_shares=100,
+            vesting_value_usd=100.0,
+            current_value_usd=150.0,
+            usd_to_eur=1.0,
+            acquisition_tax_rate=0.30,
+            regime=TaxRegime.MACRON_I,
+        )
+
+        result = calculate_rsu_taxes(input_data)
+
+        # Capital gain: (100 * 150) - (100 * 100) = 5,000
+        # PFU (30%): 5,000 * 0.30 = 1,500
+        assert result.capital_gain == pytest.approx(5_000)
+        assert result.capital_gain_tax == pytest.approx(1_500)
 
 
 class TestEdgeCases:

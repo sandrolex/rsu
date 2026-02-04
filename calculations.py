@@ -13,6 +13,7 @@ Supported tax regimes:
 from dataclasses import dataclass
 from datetime import date
 from enum import Enum
+from typing import Optional
 from dateutil.relativedelta import relativedelta
 
 
@@ -21,6 +22,21 @@ class TaxRegime(Enum):
     MACRON_I = "macron_i"
     MACRON_III = "macron_iii"
     UNRESTRICTED = "unrestricted"
+
+
+# Capital gain is taxed at flat 30% PFU (Prélèvement Forfaitaire Unique)
+# PFU includes: 12.8% income tax + 17.2% social contributions
+CAPITAL_GAIN_PFU_RATE = 0.30
+
+# French progressive income tax brackets for 2025 (on 2024 income)
+# Each tuple is (threshold, rate) - rate applies to income ABOVE the threshold
+FRENCH_TAX_BRACKETS_2025 = [
+    (0, 0.00),           # 0% up to €11,497
+    (11_497, 0.11),      # 11% from €11,498 to €29,315
+    (29_315, 0.30),      # 30% from €29,316 to €83,823
+    (83_823, 0.41),      # 41% from €83,824 to €180,294
+    (180_294, 0.45),     # 45% above €180,294
+]
 
 
 @dataclass
@@ -32,7 +48,7 @@ class RSUInput:
     vesting_value_usd: float
     current_value_usd: float
     usd_to_eur: float
-    tax_rate: float = 0.30
+    acquisition_tax_rate: float = 0.30  # Progressive rate (up to 45%)
     regime: TaxRegime = TaxRegime.MACRON_I
 
 
@@ -53,13 +69,12 @@ class RSUResult:
     acquisition_gain: float
     acquisition_gain_after_relief: float
     capital_gain: float
-    tributable_gain: float
 
-    # Taxes
-    social_security_taxes: float
-    acquisition_taxes: float
-    capital_gain_taxes: float
-    salariale_contribution: float
+    # Taxes breakdown
+    acquisition_social_security: float  # Social security on acquisition gain
+    acquisition_income_tax: float       # Income tax on acquisition gain
+    capital_gain_tax: float             # PFU on capital gain (includes social)
+    salariale_contribution: float       # 10% contribution (Macron III over €300k)
     total_taxes: float
 
     # Final results
@@ -71,7 +86,7 @@ class RSUResult:
     regime_notes: str
 
 
-# Social security rates by regime
+# Social security rates by regime (applies to acquisition gain only)
 SOCIAL_SECURITY_RATES = {
     TaxRegime.MACRON_I: 0.172,      # Patrimony rate (17.2%)
     TaxRegime.MACRON_III: 0.172,    # Patrimony rate for gains under €300k
@@ -82,6 +97,40 @@ SOCIAL_SECURITY_RATES = {
 MACRON_III_THRESHOLD = 300_000
 MACRON_III_OVER_THRESHOLD_SOCIAL_RATE = 0.097  # Activity rate
 MACRON_III_SALARIALE_CONTRIBUTION = 0.10  # 10% employee contribution
+
+
+def get_marginal_tax_rate(annual_income: float) -> float:
+    """
+    Get the marginal tax rate (TMI) based on annual taxable income.
+
+    Args:
+        annual_income: Annual taxable income in EUR
+
+    Returns:
+        Marginal tax rate (0.0 to 0.45)
+    """
+    rate = 0.0
+    for threshold, bracket_rate in FRENCH_TAX_BRACKETS_2025:
+        if annual_income > threshold:
+            rate = bracket_rate
+    return rate
+
+
+def calculate_progressive_tax(taxable_amount: float, annual_income: float) -> float:
+    """
+    Calculate tax on an amount using progressive rates based on total annual income.
+
+    The taxable_amount is taxed at the marginal rate determined by annual_income.
+
+    Args:
+        taxable_amount: Amount to be taxed in EUR
+        annual_income: Total annual taxable income (to determine bracket)
+
+    Returns:
+        Tax amount in EUR
+    """
+    marginal_rate = get_marginal_tax_rate(annual_income)
+    return taxable_amount * marginal_rate
 
 
 def calculate_years_held(vesting_date: date, sell_date: date) -> float:
@@ -104,8 +153,9 @@ def calculate_taper_relief_macron_i(years_held: float) -> tuple[bool, float]:
     Calculate taper relief for Macron I regime.
 
     Macron I abatements:
-    - 50% if held 2-8 years
-    - 65% if held 8+ years
+    - 0% if held < 2 years
+    - 50% if held >= 2 years and < 8 years
+    - 65% if held >= 8 years
 
     Args:
         years_held: Number of years shares were held
@@ -246,31 +296,13 @@ def calculate_capital_gain(gross_proceed: float, acquisition_gain: float) -> flo
     return gross_proceed - acquisition_gain
 
 
-def calculate_tributable_gain(
-    acquisition_gain_after_relief: float, capital_gain: float
-) -> float:
-    """
-    Calculate total tributable (taxable) gain.
-
-    Formula: acquisition_gain_after_relief + capital_gain
-
-    Args:
-        acquisition_gain_after_relief: Acquisition gain after taper relief in EUR
-        capital_gain: Capital gain in EUR
-
-    Returns:
-        Tributable gain in EUR
-    """
-    return acquisition_gain_after_relief + capital_gain
-
-
-def calculate_social_security_taxes(
-    tributable_gain: float,
+def calculate_acquisition_social_security(
+    acquisition_gain_after_relief: float,
     regime: TaxRegime,
     acquisition_gain: float = 0,
 ) -> float:
     """
-    Calculate social security taxes based on regime.
+    Calculate social security taxes on acquisition gain (after taper relief).
 
     Rates:
     - Macron I: 17.2% (patrimony rate)
@@ -279,7 +311,7 @@ def calculate_social_security_taxes(
     - Unrestricted: 9.7% (activity rate)
 
     Args:
-        tributable_gain: Tributable gain in EUR
+        acquisition_gain_after_relief: Acquisition gain after taper relief in EUR
         regime: Tax regime
         acquisition_gain: Original acquisition gain (for Macron III threshold)
 
@@ -287,47 +319,52 @@ def calculate_social_security_taxes(
         Social security taxes in EUR
     """
     if regime == TaxRegime.MACRON_III and acquisition_gain > MACRON_III_THRESHOLD:
-        return tributable_gain * MACRON_III_OVER_THRESHOLD_SOCIAL_RATE
+        return acquisition_gain_after_relief * MACRON_III_OVER_THRESHOLD_SOCIAL_RATE
 
     rate = SOCIAL_SECURITY_RATES.get(regime, 0.172)
-    return tributable_gain * rate
+    return acquisition_gain_after_relief * rate
 
 
-def calculate_acquisition_taxes(
+def calculate_acquisition_income_tax(
     acquisition_gain_after_relief: float, tax_rate: float
 ) -> float:
     """
-    Calculate taxes on acquisition gain.
+    Calculate income tax on acquisition gain (after taper relief).
+
+    Uses progressive income tax rate.
 
     Formula: acquisition_gain_after_relief × tax_rate
 
     Args:
         acquisition_gain_after_relief: Acquisition gain after relief in EUR
-        tax_rate: Income tax rate (default 0.30)
+        tax_rate: Progressive income tax rate (0% to 45%)
 
     Returns:
-        Acquisition taxes in EUR
+        Income tax on acquisition gain in EUR
     """
     return acquisition_gain_after_relief * tax_rate
 
 
-def calculate_capital_gain_taxes(capital_gain: float, tax_rate: float) -> float:
+def calculate_capital_gain_tax(capital_gain: float) -> float:
     """
-    Calculate taxes on capital gain.
+    Calculate tax on capital gain using PFU (flat rate).
+
+    Capital gains are taxed at a flat 30% rate (PFU):
+    - 12.8% income tax
+    - 17.2% social contributions
 
     Only positive capital gains are taxed. Losses are not taxed.
 
-    Formula: max(capital_gain, 0) × tax_rate
+    Formula: max(capital_gain, 0) × 0.30
 
     Args:
         capital_gain: Capital gain in EUR
-        tax_rate: Income tax rate (default 0.30)
 
     Returns:
-        Capital gain taxes in EUR (0 if capital loss)
+        Capital gain tax in EUR (0 if capital loss)
     """
     if capital_gain > 0:
-        return capital_gain * tax_rate
+        return capital_gain * CAPITAL_GAIN_PFU_RATE
     return 0.0
 
 
@@ -351,29 +388,29 @@ def calculate_salariale_contribution(
 
 
 def calculate_total_taxes(
-    social_security_taxes: float,
-    acquisition_taxes: float,
-    capital_gain_taxes: float,
+    acquisition_social_security: float,
+    acquisition_income_tax: float,
+    capital_gain_tax: float,
     salariale_contribution: float = 0.0,
 ) -> float:
     """
     Calculate total taxes.
 
-    Formula: social_security + acquisition_taxes + capital_gain_taxes + salariale
+    Formula: acquisition_social + acquisition_income + capital_gain + salariale
 
     Args:
-        social_security_taxes: Social security taxes in EUR
-        acquisition_taxes: Acquisition taxes in EUR
-        capital_gain_taxes: Capital gain taxes in EUR
+        acquisition_social_security: Social security on acquisition gain in EUR
+        acquisition_income_tax: Income tax on acquisition gain in EUR
+        capital_gain_tax: PFU tax on capital gain in EUR
         salariale_contribution: 10% salariale contribution (Macron III over €300k)
 
     Returns:
         Total taxes in EUR
     """
     return (
-        social_security_taxes
-        + acquisition_taxes
-        + capital_gain_taxes
+        acquisition_social_security
+        + acquisition_income_tax
+        + capital_gain_tax
         + salariale_contribution
     )
 
@@ -481,33 +518,36 @@ def calculate_rsu_taxes(input_data: RSUInput) -> RSUResult:
         years_held, input_data.regime, acquisition_gain
     )
 
-    # Calculate gains
-    gross_proceed = calculate_gross_proceed(input_data.num_shares, current_value_eur)
+    # Apply taper relief to acquisition gain
     acquisition_gain_after_relief = calculate_acquisition_gain_after_relief(
         acquisition_gain, taper_relief_rate
     )
+
+    # Calculate gains
+    gross_proceed = calculate_gross_proceed(input_data.num_shares, current_value_eur)
     capital_gain = calculate_capital_gain(gross_proceed, acquisition_gain)
-    tributable_gain = calculate_tributable_gain(
-        acquisition_gain_after_relief, capital_gain
+
+    # Calculate taxes on acquisition gain (after taper relief)
+    acquisition_social_security = calculate_acquisition_social_security(
+        acquisition_gain_after_relief, input_data.regime, acquisition_gain
+    )
+    acquisition_income_tax = calculate_acquisition_income_tax(
+        acquisition_gain_after_relief, input_data.acquisition_tax_rate
     )
 
-    # Calculate taxes
-    social_security_taxes = calculate_social_security_taxes(
-        tributable_gain, input_data.regime, acquisition_gain
-    )
-    acquisition_taxes = calculate_acquisition_taxes(
-        acquisition_gain_after_relief, input_data.tax_rate
-    )
-    capital_gain_taxes = calculate_capital_gain_taxes(
-        capital_gain, input_data.tax_rate
-    )
+    # Calculate tax on capital gain (PFU - includes social security)
+    capital_gain_tax = calculate_capital_gain_tax(capital_gain)
+
+    # Calculate salariale contribution (Macron III over €300k only)
     salariale_contribution = calculate_salariale_contribution(
         acquisition_gain, input_data.regime
     )
+
+    # Calculate total taxes
     total_taxes = calculate_total_taxes(
-        social_security_taxes,
-        acquisition_taxes,
-        capital_gain_taxes,
+        acquisition_social_security,
+        acquisition_income_tax,
+        capital_gain_tax,
         salariale_contribution,
     )
 
@@ -530,10 +570,9 @@ def calculate_rsu_taxes(input_data: RSUInput) -> RSUResult:
         acquisition_gain=acquisition_gain,
         acquisition_gain_after_relief=acquisition_gain_after_relief,
         capital_gain=capital_gain,
-        tributable_gain=tributable_gain,
-        social_security_taxes=social_security_taxes,
-        acquisition_taxes=acquisition_taxes,
-        capital_gain_taxes=capital_gain_taxes,
+        acquisition_social_security=acquisition_social_security,
+        acquisition_income_tax=acquisition_income_tax,
+        capital_gain_tax=capital_gain_tax,
         salariale_contribution=salariale_contribution,
         total_taxes=total_taxes,
         net_in_pocket=net_in_pocket,

@@ -9,6 +9,9 @@ from calculations import (
     SOCIAL_SECURITY_RATES,
     MACRON_III_THRESHOLD,
     MACRON_III_SALARIALE_CONTRIBUTION,
+    CAPITAL_GAIN_PFU_RATE,
+    FRENCH_TAX_BRACKETS_2025,
+    get_marginal_tax_rate,
 )
 
 st.set_page_config(page_title="RSU Selling Calculator", page_icon="💰")
@@ -120,14 +123,57 @@ else:
     """)
 
 st.sidebar.markdown("---")
+st.sidebar.subheader("Income Tax Rate")
 
-tax_rate = st.sidebar.slider(
-    "Income Tax Rate",
-    min_value=0.0,
-    max_value=0.5,
-    value=0.30,
-    step=0.01,
-    help="Tax rate applied to acquisition and capital gains (default 30%)"
+# Choice between manual slider or automatic calculation
+tax_input_method = st.sidebar.radio(
+    "How to determine your tax rate?",
+    options=["Manual (slider)", "Automatic (from annual income)"],
+    index=0,
+    help="Choose manual to set the rate directly, or automatic to calculate based on your annual income."
+)
+
+if tax_input_method == "Manual (slider)":
+    acquisition_tax_rate = st.sidebar.slider(
+        "Marginal Tax Rate (TMI)",
+        min_value=0.0,
+        max_value=0.45,
+        value=0.30,
+        step=0.01,
+        format="%.0f%%",
+        help="Your marginal tax rate (TMI) based on your tax bracket (0%, 11%, 30%, 41%, or 45%)"
+    )
+else:
+    annual_income = st.sidebar.number_input(
+        "Annual Taxable Income (€)",
+        min_value=0,
+        value=50_000,
+        step=1_000,
+        help="Your total annual taxable income in EUR (excluding the RSU gain)"
+    )
+    acquisition_tax_rate = get_marginal_tax_rate(annual_income)
+
+    # Show the tax brackets
+    st.sidebar.caption("**French Tax Brackets 2025:**")
+    bracket_info = """
+    | Income | Rate |
+    |--------|------|
+    | 0 - €11,497 | 0% |
+    | €11,498 - €29,315 | 11% |
+    | €29,316 - €83,823 | 30% |
+    | €83,824 - €180,294 | 41% |
+    | > €180,294 | 45% |
+    """
+    st.sidebar.markdown(bracket_info)
+    st.sidebar.success(f"**Your TMI: {acquisition_tax_rate*100:.0f}%**")
+
+st.sidebar.markdown("---")
+
+# Capital gain uses flat rate (PFU)
+st.sidebar.metric(
+    "Capital Gain Tax (PFU)",
+    f"{CAPITAL_GAIN_PFU_RATE * 100:.0f}%",
+    help="Capital gains are taxed at a flat 30% rate (PFU: 12.8% income tax + 17.2% social contributions)"
 )
 
 # Show the social security rate (not editable, depends on regime)
@@ -135,7 +181,7 @@ social_security_rate = SOCIAL_SECURITY_RATES.get(selected_regime, 0.172)
 st.sidebar.metric(
     "Social Security Rate",
     f"{social_security_rate * 100:.1f}%",
-    help="Rate depends on selected regime"
+    help="Applied to acquisition gain. Rate depends on selected regime."
 )
 
 # Input section
@@ -318,23 +364,21 @@ else:  # UNRESTRICTED
 # Apply taper relief to acquisition gain
 acquisition_gain_after_relief = acquisition_gain * (1 - taper_relief_rate)
 
-# Tributable gain = acquisition gain (after relief) + capital gain
-tributable_gain = acquisition_gain_after_relief + capital_gain
-
 # Calculate social security rate based on regime
 if selected_regime == TaxRegime.MACRON_III and acquisition_gain > MACRON_III_THRESHOLD:
     effective_social_rate = 0.097  # Activity rate for over-threshold
 else:
     effective_social_rate = SOCIAL_SECURITY_RATES.get(selected_regime, 0.172)
 
-# Taxes
-social_security_taxes = tributable_gain * effective_social_rate
-acquisition_taxes = acquisition_gain_after_relief * tax_rate
+# Taxes on acquisition gain (after taper relief)
+acquisition_social_security = acquisition_gain_after_relief * effective_social_rate
+acquisition_income_tax = acquisition_gain_after_relief * acquisition_tax_rate
 
+# Tax on capital gain (PFU - flat 30%, includes social security)
 if capital_gain > 0:
-    capital_gain_taxes = capital_gain * tax_rate
+    capital_gain_tax = capital_gain * CAPITAL_GAIN_PFU_RATE
 else:
-    capital_gain_taxes = 0  # No taxes on capital losses
+    capital_gain_tax = 0  # No taxes on capital losses
 
 # Salariale contribution (Macron III over €300k only)
 if selected_regime == TaxRegime.MACRON_III and acquisition_gain > MACRON_III_THRESHOLD:
@@ -343,7 +387,7 @@ else:
     salariale_contribution = 0.0
 
 # Total taxes
-total_taxes = social_security_taxes + acquisition_taxes + capital_gain_taxes + salariale_contribution
+total_taxes = acquisition_social_security + acquisition_income_tax + capital_gain_tax + salariale_contribution
 
 # Net in pocket
 net_in_pocket = gross_proceed - total_taxes
@@ -353,7 +397,7 @@ total_loss_in_taxes = gross_proceed - net_in_pocket
 tax_percentage = (total_loss_in_taxes / gross_proceed * 100) if gross_proceed > 0 else 0
 
 # Display regime info
-st.info(f"**Regime:** {regime_name} | **Taper Relief:** {relief_description}")
+st.info(f"**Regime:** {regime_name} | **Taper Relief:** {relief_description} | **TMI:** {acquisition_tax_rate*100:.0f}%")
 
 # Display holding period info
 col_info1, col_info2 = st.columns(2)
@@ -442,38 +486,31 @@ with col_g3:
         help=f"**Formula:** Gross Proceed - Acquisition Gain\n\n= €{gross_proceed:,.2f} - €{acquisition_gain:,.2f} = €{capital_gain:,.2f}"
     )
 
-st.metric(
-    "Tributable Gain",
-    f"€{tributable_gain:,.2f}",
-    help=f"**Formula:** Acquisition Gain (after relief) + Capital Gain\n\n= €{acquisition_gain_after_relief:,.2f} + €{capital_gain:,.2f} = €{tributable_gain:,.2f}"
-)
-
 # Taxes breakdown
 st.subheader("🏛️ Taxes Breakdown")
 
-# Determine number of columns based on whether salariale contribution applies
-if salariale_contribution > 0:
-    col_t1, col_t2, col_t3, col_t4 = st.columns(4)
-else:
-    col_t1, col_t2, col_t3 = st.columns(3)
-
+st.markdown("**Acquisition Gain Taxes** (on acquisition gain after taper relief)")
+col_t1, col_t2 = st.columns(2)
 with col_t1:
     st.metric(
         f"Social Security ({effective_social_rate*100:.1f}%)",
-        f"€{social_security_taxes:,.2f}",
-        help=f"**Formula:** Tributable Gain × Social Security Rate\n\n= €{tributable_gain:,.2f} × {effective_social_rate} = €{social_security_taxes:,.2f}"
+        f"€{acquisition_social_security:,.2f}",
+        help=f"**Formula:** Acquisition Gain (after relief) × Social Security Rate\n\n= €{acquisition_gain_after_relief:,.2f} × {effective_social_rate} = €{acquisition_social_security:,.2f}"
     )
 with col_t2:
     st.metric(
-        f"Acquisition Tax ({tax_rate*100:.0f}%)",
-        f"€{acquisition_taxes:,.2f}",
-        help=f"**Formula:** Acquisition Gain (after relief) × Tax Rate\n\n= €{acquisition_gain_after_relief:,.2f} × {tax_rate} = €{acquisition_taxes:,.2f}"
+        f"Income Tax ({acquisition_tax_rate*100:.0f}%)",
+        f"€{acquisition_income_tax:,.2f}",
+        help=f"**Formula:** Acquisition Gain (after relief) × Marginal Tax Rate\n\n= €{acquisition_gain_after_relief:,.2f} × {acquisition_tax_rate} = €{acquisition_income_tax:,.2f}"
     )
+
+st.markdown("**Capital Gain Tax** (PFU - includes 12.8% income + 17.2% social)")
+col_t3, col_t4 = st.columns(2)
 with col_t3:
     st.metric(
-        f"Capital Gain Tax ({tax_rate*100:.0f}%)",
-        f"€{capital_gain_taxes:,.2f}",
-        help=f"**Formula:** Capital Gain × Tax Rate (only if positive)\n\n= €{max(capital_gain, 0):,.2f} × {tax_rate} = €{capital_gain_taxes:,.2f}"
+        f"PFU ({CAPITAL_GAIN_PFU_RATE*100:.0f}%)",
+        f"€{capital_gain_tax:,.2f}",
+        help=f"**Formula:** Capital Gain × PFU Rate (only if positive)\n\n= €{max(capital_gain, 0):,.2f} × {CAPITAL_GAIN_PFU_RATE} = €{capital_gain_tax:,.2f}"
     )
 
 if salariale_contribution > 0:
@@ -495,7 +532,7 @@ with col_f1:
         f"€{total_taxes:,.2f}",
         delta=f"-{tax_percentage:.1f}%",
         delta_color="inverse",
-        help=f"**Formula:** Social Security + Acquisition Tax + Capital Gain Tax + Salariale\n\n= €{social_security_taxes:,.2f} + €{acquisition_taxes:,.2f} + €{capital_gain_taxes:,.2f} + €{salariale_contribution:,.2f} = €{total_taxes:,.2f}"
+        help=f"**Formula:** Acquisition Social + Acquisition Income Tax + Capital Gain Tax + Salariale\n\n= €{acquisition_social_security:,.2f} + €{acquisition_income_tax:,.2f} + €{capital_gain_tax:,.2f} + €{salariale_contribution:,.2f} = €{total_taxes:,.2f}"
     )
 with col_f2:
     st.metric(
@@ -519,6 +556,7 @@ with st.expander("📋 Detailed Summary"):
     | Item | Value |
     |------|-------|
     | **Tax Regime** | {regime_name} |
+    | **Marginal Tax Rate (TMI)** | {acquisition_tax_rate*100:.0f}% |
     | **Shares to Sell** | {num_shares} |
     | **Current Value (USD)** | ${actual_value_usd:,.2f} |
     | **USD/EUR Rate** | {usd_to_eur} |
@@ -532,11 +570,10 @@ with st.expander("📋 Detailed Summary"):
     | **Acquisition Gain** | €{acquisition_gain:,.2f} |
     | **Acquisition Gain (after relief)** | €{acquisition_gain_after_relief:,.2f} |
     | **Capital Gain** | €{capital_gain:,.2f} |
-    | **Tributable Gain** | €{tributable_gain:,.2f} |
     | --- | --- |
-    | **Social Security Taxes ({effective_social_rate*100:.1f}%)** | €{social_security_taxes:,.2f} |
-    | **Acquisition Taxes** | €{acquisition_taxes:,.2f} |
-    | **Capital Gain Taxes** | €{capital_gain_taxes:,.2f} |
+    | **Acquisition Social Security ({effective_social_rate*100:.1f}%)** | €{acquisition_social_security:,.2f} |
+    | **Acquisition Income Tax ({acquisition_tax_rate*100:.0f}%)** | €{acquisition_income_tax:,.2f} |
+    | **Capital Gain Tax (PFU {CAPITAL_GAIN_PFU_RATE*100:.0f}%)** | €{capital_gain_tax:,.2f} |
     """
 
     if salariale_contribution > 0:
@@ -561,19 +598,19 @@ with st.expander("📐 Formulas Reference"):
     - **Acquisition Gain** = Number of Shares × Vesting Value (€)
     - **Acquisition Gain (after relief)** = Acquisition Gain × (1 - Taper Relief Rate)
     - **Capital Gain** = Gross Proceed - Acquisition Gain
-    - **Tributable Gain** = Acquisition Gain (after relief) + Capital Gain
 
     ### Taper Relief by Regime
 
     | Regime | Condition | Relief |
     |--------|-----------|--------|
+    | **Macron I** | Held < 2 years | 0% |
     | **Macron I** | Held 2-8 years | 50% |
     | **Macron I** | Held 8+ years | 65% |
     | **Macron III** | Gain ≤ €300k | 50% (automatic) |
     | **Macron III** | Gain > €300k | 0% + 10% salariale |
     | **Unrestricted** | Always | 0% |
 
-    ### Social Security Rates
+    ### Social Security Rates (on Acquisition Gain)
 
     | Regime | Rate | Type |
     |--------|------|------|
@@ -583,15 +620,33 @@ with st.expander("📐 Formulas Reference"):
     | **Unrestricted** | 9.7% | Activity |
 
     ### Taxes
-    - **Social Security Taxes** = Tributable Gain × Social Security Rate
-    - **Acquisition Taxes** = Acquisition Gain (after relief) × Income Tax Rate
-    - **Capital Gain Taxes** = Capital Gain × Income Tax Rate *(only if positive)*
-    - **Salariale Contribution** = Acquisition Gain × 10% *(Macron III over €300k only)*
-    - **Total Taxes** = Social Security + Acquisition Taxes + Capital Gain Taxes + Salariale
+
+    **On Acquisition Gain (after taper relief):**
+    - **Social Security** = Acquisition Gain (after relief) × Social Security Rate
+    - **Income Tax** = Acquisition Gain (after relief) × Marginal Tax Rate (TMI)
+
+    **On Capital Gain:**
+    - **PFU (Flat Tax)** = Capital Gain × 30% *(includes 12.8% income + 17.2% social)*
+
+    **Additional (Macron III over €300k):**
+    - **Salariale Contribution** = Acquisition Gain × 10%
+
+    **Total:**
+    - **Total Taxes** = Acquisition Social + Acquisition Income Tax + Capital Gain PFU + Salariale
 
     ### Final Results
     - **Net in Pocket** = Gross Proceed - Total Taxes
     - **Effective Tax Rate** = (Total Taxes / Gross Proceed) × 100
+
+    ### French Income Tax Brackets (2025)
+
+    | Taxable Income | Rate |
+    |----------------|------|
+    | 0 - €11,497 | 0% |
+    | €11,498 - €29,315 | 11% |
+    | €29,316 - €83,823 | 30% |
+    | €83,824 - €180,294 | 41% |
+    | > €180,294 | 45% |
     """)
 
 # Regime comparison
