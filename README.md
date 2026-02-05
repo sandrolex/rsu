@@ -1,5 +1,8 @@
 # RSU Selling Calculator
 
+[![CI](https://github.com/sandrolex/rsu/actions/workflows/ci.yml/badge.svg)](https://github.com/sandrolex/rsu/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/sandrolex/rsu/graph/badge.svg)](https://codecov.io/gh/sandrolex/rsu)
+
 A web-based calculator for estimating taxes when selling Restricted Stock Units (RSUs), specifically designed for Meta shares with French tax rules.
 
 ![RSU Calculator Screenshot](docs/screenshot.png)
