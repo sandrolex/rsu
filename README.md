@@ -3,7 +3,7 @@
 [![CI](https://github.com/sandrolex/rsu/actions/workflows/ci.yml/badge.svg)](https://github.com/sandrolex/rsu/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/sandrolex/rsu/graph/badge.svg)](https://codecov.io/gh/sandrolex/rsu)
 
-A web-based calculator for estimating taxes when selling Restricted Stock Units (RSUs), specifically designed for Meta shares with French tax rules.
+A web-based calculator for estimating French taxes when selling Restricted Stock Units (RSUs). Works with any stock available on Yahoo Finance.
 
 ![RSU Calculator Screenshot](docs/screenshot.png)
 
