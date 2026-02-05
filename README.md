@@ -2,6 +2,8 @@
 
 A web-based calculator for estimating taxes when selling Restricted Stock Units (RSUs), specifically designed for Meta shares with French tax rules.
 
+![RSU Calculator Screenshot](docs/screenshot.png)
+
 ## Features
 
 - **Multiple tax regimes**: Support for Macron I, Macron III, and Unrestricted (non-qualified) plans
