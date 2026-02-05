@@ -520,47 +520,45 @@ with tab_single:
             if stock_name != stock_ticker:
                 st.caption(f"📈 {stock_name}")
 
+        # Fetch buttons with callbacks that update widget keys directly
+        def fetch_stock_prices():
+            ticker = st.session_state.get("single_ticker", "META").upper().strip()
+            v_date = st.session_state.get("single_vesting")
+            s_date = st.session_state.get("single_sell")
+
+            vp = fetch_stock_price_no_cache(ticker, v_date)
+            cp = fetch_stock_price_no_cache(ticker, s_date)
+
+            # Update the widget keys directly
+            if vp is not None:
+                st.session_state.single_vesting_value = float(vp)
+            if cp is not None:
+                st.session_state.single_current_value = float(cp)
+
+            # Store status for display
+            st.session_state.fetch_status = f"Vesting: {'$'+f'{vp:.2f}' if vp else 'failed'}, Current: {'$'+f'{cp:.2f}' if cp else 'failed'}"
+
+        def fetch_usd_rate():
+            rate = fetch_usd_eur_rate()
+            if rate is not None:
+                st.session_state.single_usd_eur_input = float(rate)
+                st.session_state.rate_status = f"Rate: {rate:.4f}"
+            else:
+                st.session_state.rate_status = "Failed to fetch rate"
+
         col_fetch1, col_fetch2 = st.columns(2)
         with col_fetch1:
-            fetch_stock = st.button(f"🔄 Fetch {stock_ticker}", key="single_fetch_stock", use_container_width=True)
+            st.button(f"🔄 Fetch {stock_ticker}", key="single_fetch_stock",
+                     on_click=fetch_stock_prices, use_container_width=True)
         with col_fetch2:
-            fetch_currency = st.button("🔄 Fetch USD/EUR", key="single_fetch_currency", use_container_width=True)
+            st.button("🔄 Fetch USD/EUR", key="single_fetch_currency",
+                     on_click=fetch_usd_rate, use_container_width=True)
 
-        # Initialize session state for single calculation (use widget keys directly)
-        if "single_vesting_value" not in st.session_state:
-            st.session_state.single_vesting_value = 100.0
-        if "single_current_value" not in st.session_state:
-            st.session_state.single_current_value = 150.0
-        if "single_usd_eur_input" not in st.session_state:
-            st.session_state.single_usd_eur_input = 0.92
-
-        if fetch_stock:
-            with st.spinner(f"Fetching {stock_ticker} prices..."):
-                # Use no-cache for fresh data
-                vp = fetch_stock_price_no_cache(stock_ticker, vesting_date)
-                cp = fetch_stock_price_no_cache(stock_ticker, sell_date)
-
-                if vp:
-                    st.session_state.single_vesting_value = vp
-                if cp:
-                    st.session_state.single_current_value = cp
-
-                # Show feedback
-                if not vp and not cp:
-                    st.error(f"Could not fetch prices for {stock_ticker}")
-                elif not vp:
-                    st.warning(f"Could not fetch vesting price for {vesting_date}")
-                elif not cp:
-                    st.warning(f"Could not fetch current price for {sell_date}")
-
-            st.rerun()
-
-        if fetch_currency:
-            with st.spinner("Fetching rate..."):
-                rate = fetch_usd_eur_rate()
-                if rate:
-                    st.session_state.single_usd_eur_input = rate
-            st.rerun()
+        # Show fetch status
+        if "fetch_status" in st.session_state:
+            st.caption(st.session_state.fetch_status)
+        if "rate_status" in st.session_state:
+            st.caption(st.session_state.rate_status)
 
     st.subheader("📈 Values (editable)")
     col_val1, col_val2, col_val3 = st.columns(3)
@@ -569,6 +567,7 @@ with tab_single:
         vesting_value_usd = st.number_input(
             "Vesting Value per Share ($)",
             min_value=0.0,
+            value=100.0,
             step=1.0,
             key="single_vesting_value"
         )
@@ -577,6 +576,7 @@ with tab_single:
         actual_value_usd = st.number_input(
             "Current Share Value ($)",
             min_value=0.0,
+            value=150.0,
             step=1.0,
             key="single_current_value"
         )
@@ -585,6 +585,7 @@ with tab_single:
         usd_to_eur = st.number_input(
             "USD to EUR Rate",
             min_value=0.0,
+            value=0.92,
             step=0.01,
             key="single_usd_eur_input"
         )
@@ -706,6 +707,7 @@ with tab_compare:
         compare_usd_eur = st.number_input(
             "USD to EUR Rate",
             min_value=0.0,
+            value=0.92,
             step=0.01,
             key="compare_usd_eur"
         )
@@ -761,58 +763,58 @@ with tab_compare:
             key="b_shares"
         )
 
-    # Fetch button (now after dates are defined)
+    # Fetch buttons with callbacks
+    def fetch_compare_prices():
+        ticker = st.session_state.get("compare_ticker", "META").upper().strip()
+        a_v_date = st.session_state.get("a_vesting")
+        a_s_date = st.session_state.get("a_sell")
+        b_v_date = st.session_state.get("b_vesting")
+        b_s_date = st.session_state.get("b_sell")
+
+        a_vp = fetch_stock_price_no_cache(ticker, a_v_date)
+        a_cp = fetch_stock_price_no_cache(ticker, a_s_date)
+        b_vp = fetch_stock_price_no_cache(ticker, b_v_date)
+        b_cp = fetch_stock_price_no_cache(ticker, b_s_date)
+
+        if a_vp is not None:
+            st.session_state.a_vesting_value = float(a_vp)
+        if a_cp is not None:
+            st.session_state.a_current_value = float(a_cp)
+        if b_vp is not None:
+            st.session_state.b_vesting_value = float(b_vp)
+        if b_cp is not None:
+            st.session_state.b_current_value = float(b_cp)
+
+        a_vp_str = f"${a_vp:.2f}" if a_vp else "N/A"
+        a_cp_str = f"${a_cp:.2f}" if a_cp else "N/A"
+        b_vp_str = f"${b_vp:.2f}" if b_vp else "N/A"
+        b_cp_str = f"${b_cp:.2f}" if b_cp else "N/A"
+        st.session_state.compare_fetch_status = f"A: {a_vp_str}/{a_cp_str} | B: {b_vp_str}/{b_cp_str}"
+
+    def fetch_compare_rate():
+        rate = fetch_usd_eur_rate()
+        if rate is not None:
+            st.session_state.compare_usd_eur = float(rate)
+            st.session_state.compare_rate_status = f"Rate: {rate:.4f}"
+        else:
+            st.session_state.compare_rate_status = "Failed"
+
     st.divider()
     col_fetch1, col_fetch2 = st.columns(2)
     with col_fetch1:
-        fetch_compare = st.button(f"🔄 Fetch {compare_ticker} Prices for Both Scenarios", key="compare_fetch", use_container_width=True)
+        st.button(f"🔄 Fetch {compare_ticker} Prices", key="compare_fetch",
+                 on_click=fetch_compare_prices, use_container_width=True)
     with col_fetch2:
-        fetch_compare_currency = st.button("🔄 Fetch USD/EUR Rate", key="compare_fetch_currency", use_container_width=True)
+        st.button("🔄 Fetch USD/EUR Rate", key="compare_fetch_currency",
+                 on_click=fetch_compare_rate, use_container_width=True)
 
-    if fetch_compare:
-        with st.spinner(f"Fetching {compare_ticker} prices..."):
-            # Fetch for Scenario A (use no-cache for fresh data)
-            a_vp = fetch_stock_price_no_cache(compare_ticker, a_vesting_date)
-            a_cp = fetch_stock_price_no_cache(compare_ticker, a_sell_date)
+    # Show fetch status
+    if "compare_fetch_status" in st.session_state:
+        st.caption(st.session_state.compare_fetch_status)
+    if "compare_rate_status" in st.session_state:
+        st.caption(st.session_state.compare_rate_status)
 
-            if a_vp:
-                st.session_state.a_vesting_value = a_vp
-            if a_cp:
-                st.session_state.a_current_value = a_cp
-
-            # Fetch for Scenario B
-            b_vp = fetch_stock_price_no_cache(compare_ticker, b_vesting_date)
-            b_cp = fetch_stock_price_no_cache(compare_ticker, b_sell_date)
-
-            if b_vp:
-                st.session_state.b_vesting_value = b_vp
-            if b_cp:
-                st.session_state.b_current_value = b_cp
-
-            # Show feedback for any failures
-            errors = []
-            if not a_vp:
-                errors.append(f"A vesting ({a_vesting_date})")
-            if not a_cp:
-                errors.append(f"A current ({a_sell_date})")
-            if not b_vp:
-                errors.append(f"B vesting ({b_vesting_date})")
-            if not b_cp:
-                errors.append(f"B current ({b_sell_date})")
-
-            if errors:
-                st.warning(f"Could not fetch: {', '.join(errors)}")
-
-        st.rerun()
-
-    if fetch_compare_currency:
-        with st.spinner("Fetching USD/EUR rate..."):
-            rate = fetch_usd_eur_rate()
-            if rate:
-                st.session_state.compare_usd_eur = rate
-        st.rerun()
-
-    # Value inputs (use session state via key)
+    # Value inputs
     st.subheader("📈 Stock Values")
     col_val_a, col_val_b = st.columns(2)
 
@@ -821,6 +823,7 @@ with tab_compare:
         a_vesting_value = st.number_input(
             "Vesting Value ($)",
             min_value=0.0,
+            value=100.0,
             step=1.0,
             key="a_vesting_value"
         )
@@ -828,6 +831,7 @@ with tab_compare:
         a_current_value = st.number_input(
             "Current Value ($)",
             min_value=0.0,
+            value=150.0,
             step=1.0,
             key="a_current_value"
         )
@@ -837,6 +841,7 @@ with tab_compare:
         b_vesting_value = st.number_input(
             "Vesting Value ($)",
             min_value=0.0,
+            value=80.0,
             step=1.0,
             key="b_vesting_value"
         )
@@ -844,6 +849,7 @@ with tab_compare:
         b_current_value = st.number_input(
             "Current Value ($)",
             min_value=0.0,
+            value=150.0,
             step=1.0,
             key="b_current_value"
         )
