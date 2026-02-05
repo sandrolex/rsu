@@ -456,7 +456,7 @@ else:
     annual_income_value = st.sidebar.number_input(
         "Annual Taxable Income (€)",
         min_value=0,
-        value=50_000,
+        value=100_000,
         step=1_000,
     )
     acquisition_tax_rate = get_marginal_tax_rate(annual_income_value)
@@ -494,13 +494,13 @@ with tab_single:
 
         vesting_date = st.date_input(
             "Vesting Date",
-            value=date.today() - relativedelta(years=1),
+            value=date(2024, 2, 15),
             key="single_vesting"
         )
 
         sell_date = st.date_input(
             "Sell Date",
-            value=date.today(),
+            value=date(date.today().year, date.today().month, 15),
             key="single_sell"
         )
 
@@ -722,13 +722,13 @@ with tab_compare:
 
         a_vesting_date = st.date_input(
             "Vesting Date",
-            value=date.today() - relativedelta(years=1),
+            value=date(2024, 2, 15),
             key="a_vesting"
         )
 
         a_sell_date = st.date_input(
             "Sell Date",
-            value=date.today(),
+            value=date(date.today().year, date.today().month, 15),
             key="a_sell"
         )
 
@@ -745,13 +745,13 @@ with tab_compare:
 
         b_vesting_date = st.date_input(
             "Vesting Date",
-            value=date.today() - relativedelta(years=3),
+            value=date(2024, 2, 15),
             key="b_vesting"
         )
 
         b_sell_date = st.date_input(
             "Sell Date",
-            value=date.today(),
+            value=date(date.today().year, date.today().month, 15),
             key="b_sell"
         )
 
